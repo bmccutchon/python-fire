@@ -33,6 +33,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import itertools
+
+import typing
+if typing.TYPE_CHECKING:
+  from typing import Iterator, Text
+
 from fire import completion
 from fire import custom_descriptions
 from fire import decorators
@@ -44,7 +50,7 @@ LINE_LENGTH = 80
 
 
 def HelpText(component, trace=None, verbose=False):
-  """Gets the help string for the current component, suitalbe for a help screen.
+  """Gets the help string for the current component, suitable for a help screen.
 
   Args:
     component: The component to construct the help string for.
@@ -162,6 +168,11 @@ def _DescriptionSection(component, info):
     return None
 
 
+def _CreateKeywordOnlyFlagItem(flag, docstring_info, spec):
+  return _CreateFlagItem(flag, docstring_info,
+                         required=flag not in spec.kwonlydefaults)
+
+
 def _ArgsAndFlagsSections(info, spec, metadata):
   """The "Args and Flags" sections of the help string."""
   args_with_no_defaults = spec.args[:len(spec.args) - len(spec.defaults)]
@@ -194,15 +205,15 @@ def _ArgsAndFlagsSections(info, spec, metadata):
           ('NOTES', 'You can also use flags syntax for POSITIONAL ARGUMENTS')
       )
 
-  optional_flag_items = [
+  positional_flag_items = [
       _CreateFlagItem(flag, docstring_info, required=False)
       for flag in args_with_defaults
   ]
-  required_flag_items = [
-      _CreateFlagItem(flag, docstring_info, required=True)
+  keyword_only_flag_items = [
+      _CreateKeywordOnlyFlagItem(flag, docstring_info, spec=spec)
       for flag in spec.kwonlyargs
   ]
-  flag_items = optional_flag_items + required_flag_items
+  flag_items = positional_flag_items + keyword_only_flag_items
 
   if spec.varkw:
     description = _GetArgDescription(spec.varkw, docstring_info)
@@ -376,8 +387,8 @@ def _CreateFlagItem(flag, docstring_info, required=False):
     docstring_info: A docstrings.DocstringInfo namedtuple with information about
       the containing function's docstring.
     required: Whether the flag is required. Keyword-only arguments (only in
-      Python 3) become required flags, whereas normal keyword arguments become
-      optional flags.
+      Python 3) without defaults become required flags, whereas other keyword
+      arguments become optional flags.
   Returns:
     A string to be used in constructing the help screen for the function.
   """
@@ -560,13 +571,26 @@ def _GetCallableUsageItems(spec, metadata):
   return items
 
 
+def _RequiredKwOnlyArgs(spec):
+  # type: (inspectutils.FullArgSpec) -> Iterator[Text]
+  return (flag for flag in spec.kwonlyargs if flag not in spec.kwonlydefaults)
+
+
+def _OptionalKwOnlyArgs(spec):
+  # type: (inspectutils.FullArgSpec) -> Iterator[Text]
+  return (flag for flag in spec.kwonlyargs if flag in spec.kwonlydefaults)
+
+
 def _GetCallableAvailabilityLines(spec):
   """The list of availability lines for a callable for use in a usage string."""
   args_with_defaults = spec.args[len(spec.args) - len(spec.defaults):]
 
   # TODO(dbieber): Handle args_with_no_defaults if not accepts_positional_args.
-  optional_flags = [('--' + flag) for flag in args_with_defaults]
-  required_flags = [('--' + flag) for flag in spec.kwonlyargs]
+  optional_flags = [
+      ('--' + flag)
+      for flag in itertools.chain(args_with_defaults, _OptionalKwOnlyArgs(spec))
+  ]
+  required_flags = [('--' + flag) for flag in _RequiredKwOnlyArgs(spec)]
 
   # Flags section:
   availability_lines = []
